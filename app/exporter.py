@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import sys
 import tempfile
+import json
 from zipfile import ZipFile, ZIP_DEFLATED
 import xml.etree.ElementTree as ET
 import openpyxl
@@ -90,6 +91,8 @@ def _cache_formulas(path, cache):
 def export_statement(path, quotes, deliveries, matches, *, draft=True, acknowledged=False, tax_rate=Decimal('0')):
     if not matches or len(matches) != len(deliveries.items):
         raise ValueError('送货记录为空或匹配结果不完整，请重新导入。')
+    if not draft and (quotes.unresolved or deliveries.unresolved):
+        raise ValueError('强制导入的记录仍有未修正问题，只能生成待核对稿。请先修改并确认导入。')
     if not draft and (not all(m.ready for m in matches) or not acknowledged):
         raise ValueError('正式对账单要求全部记录匹配完成，并确认所有诊断提示。')
     if not tax_rate.is_finite() or not Decimal('0') <= tax_rate <= Decimal('1'):
@@ -119,7 +122,7 @@ def export_statement(path, quotes, deliveries, matches, *, draft=True, acknowled
     literal(ws['B5'], f'核对日期：{date.today():%Y-%m-%d}')
     cache, total, taxable = {}, Decimal('0'), Decimal('0')
     audit = wb.create_sheet('来源明细')
-    headers = ['对账序号','报价文件','报价工作表','报价原始行','报价商品序号','报价商品名称','报价规格','报价单位','原报价','单位倍率','有效单价','送货文件','送货工作表','送货原始行','送货商品序号','原送货单价','原送货金额','匹配状态','确认原因','报价日期','报价已含税']
+    headers = ['对账序号','报价文件','报价工作表','报价原始行','报价商品序号','报价商品名称','报价规格','报价单位','原报价','单位倍率','有效单价','送货文件','送货工作表','送货原始行','送货商品序号','原送货单价','原送货金额','匹配状态','确认原因','报价日期','报价已含税','导入方式','送货原始字段','送货修改记录','报价原始字段','报价修改记录','未修正问题']
     audit.append(headers)
     for i, m in enumerate(matches, 1):
         r, d, q = i+6, m.delivery, m.quote
@@ -128,9 +131,12 @@ def export_statement(path, quotes, deliveries, matches, *, draft=True, acknowled
         note = d.note
         if not m.ready:
             note = (note + '；' if note else '') + '待确认：' + m.status
+            if d.validation_errors:
+                note += '；' + '；'.join(d.validation_errors.values())
         elif m.reason:
             note = (note + '；' if note else '') + m.reason
-        values = [i, d.day, d.order, d.name + ((' ' + d.spec) if d.spec and d.spec not in d.name else ''), d.unit, d.quantity,
+        quantity=d.edit_values.get('quantity','') if 'quantity' in d.validation_errors else d.quantity
+        values = [i, d.day, d.order, d.name + ((' ' + d.spec) if d.spec and d.spec not in d.name else ''), d.unit, quantity,
                   m.price if m.ready else None, None, note, q.serial if q else '待确认', d.serial]
         for c, value in enumerate(values, 1):
             if isinstance(value, Decimal):
@@ -152,7 +158,11 @@ def export_statement(path, quotes, deliveries, matches, *, draft=True, acknowled
                 ws.cell(r,c).fill = PatternFill('solid', fgColor='FFF2CC')
         row = [i, Path(q.file).name if q else '', q.sheet if q else '', q.row if q else '', q.serial if q else '', q.name if q else '', q.spec if q else '', q.unit if q else '',
                q.price if q else None, m.factor, m.price if m.ready else None, Path(d.file).name, d.sheet, d.row, d.serial,
-               d.price, d.original_amount, m.status, m.reason, q.effective if q else None, '是' if q and q.tax_included else '否']
+               d.price, d.original_amount, m.status, m.reason, q.effective if q else None, '是' if q and q.tax_included else '否',
+               '强制导入' if quotes.forced or deliveries.forced else '正常导入',
+               json.dumps(d.original_values,ensure_ascii=False),json.dumps(d.edit_history,ensure_ascii=False),
+               json.dumps(q.original_values,ensure_ascii=False) if q else '',json.dumps(q.edit_history,ensure_ascii=False) if q else '',
+               '；'.join(d.validation_errors.values())]
         for c,v in enumerate(row,1):
             literal(audit.cell(i+1,c), float(v) if isinstance(v,Decimal) else v)
     end = 6 + len(matches)
@@ -180,6 +190,8 @@ def export_statement(path, quotes, deliveries, matches, *, draft=True, acknowled
     ws.cell(total_row+2,8,f'=H{total_row}+H{total_row+1}'); cache[f'H{total_row+2}']=total+tax
     warnings = sum(not m.ready for m in matches)
     footer = f'待核对稿：共 {len(matches)} 条，{warnings} 条待确认；金额为空的记录未纳入小计，不可作为最终结算。' if draft else '按已确认报价和人工调整生成；金额显示两位小数，合计按完整精度计算。'
+    if quotes.forced or deliveries.forced:
+        footer += f' 本次含强制导入数据，仍有 {quotes.unresolved+deliveries.unresolved} 项导入问题。'
     for offset,line in [(4,footer),(5,'报价商品序号为空时使用“工作表!原始行”；详细来源及人工确认原因见“来源明细”。'),(7,'制表人：                         核对人：                         审核：                         审批：'),(8,'账户名称：'),(9,'账户号码：')]:
         r=total_row+offset
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=11)

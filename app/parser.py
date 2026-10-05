@@ -47,8 +47,9 @@ def header_at(values):
     return fields
 
 
-def import_excel(path, kind):
+def import_excel(path, kind, *, preview=False):
     result = ImportResult(str(Path(path).resolve()))
+    result.kind = kind
     if Path(path).suffix.lower() not in ('.xlsx', '.xlsm'):
         raise ImportFailure([Issue('打开文件', str(path), '仅支持 .xlsx / .xlsm，旧版 .xls 或 CSV 不能直接导入。', '请用 Excel/WPS 另存为 .xlsx。', '错误')])
     try:
@@ -103,12 +104,15 @@ def import_excel(path, kind):
                 else:
                     result.customer = found
         current_day = None
+        current_day_raw = ''
         current_order = ''
         effective = None
+        effective_raw = ''
         tax_included = '含税' in sheet.name or ('含税。' in all_text and '+6%' not in all_text)
         try:
             effective = parse_date(before) if kind == 'quote' else None
         except ValueError:
+            effective_raw = before
             result.issues.append(Issue('识别报价日期', sheet.name, '报价日期无效', '修正为 YYYY-MM-DD。'))
         count = 0
         active = False
@@ -117,13 +121,15 @@ def import_excel(path, kind):
             joined = ' '.join(text(v) for v in values.values())
             # 订单元数据可在每个打印块的表头之前重复出现。
             if kind == 'delivery' and (r < first or not active):
+                om = re.search(r'(?:送货单号|订单号|送货单编号)\s*[:：]\s*([A-Za-z0-9_-]+)', joined)
+                if om:
+                    current_order = om[1]
                 try:
                     m = re.search(r'日期\s*[:：]\s*(20\d{2}[-/年.]\d{1,2}[-/月.]\d{1,2}|20\d{6})', joined)
                     if m:
+                        current_day_raw = m[1]
+                        current_day = None
                         current_day = parse_date(m[1])
-                    om = re.search(r'(?:送货单号|订单号|送货单编号)\s*[:：]\s*([A-Za-z0-9_-]+)', joined)
-                    if om:
-                        current_order = om[1]
                 except ValueError:
                     result.issues.append(Issue('识别日期', f'{sheet.name}!{r}', '单据日期不合法', '修改为真实日期后重新导入。'))
             if r in header_rows:
@@ -141,22 +147,30 @@ def import_excel(path, kind):
             raw_qty = get('quantity')
             raw_price = get('price')
             unit = text(get('unit', True))
+            if normalize(raw_price) in ('圆养报价', '参考报价'):
+                continue
             # 分类行无单位、无数值价格；缺价但有单位的商品不能丢失。
             if kind == 'quote' and not unit:
                 try:
                     category = number(raw_price) is None
                 except ValueError:
                     category = True
-                if category and not get('code') and not get('serial'):
+                is_category_note = text(raw_price) == '各规格价格一样'
+                empty_category = ('unit' in cols and raw_price is None and not extract_spec(name)
+                                  and (r, cols.get('price')) not in sheet.formulas)
+                if category and (is_category_note or empty_category) and not get('code') and not get('serial'):
                     continue
-            if kind == 'delivery' and not name and raw_qty is None:
+            if (kind == 'delivery' and not name and raw_qty is None and raw_price is None
+                    and get('amount') is None
+                    and not any((r, cols.get(k)) in sheet.formulas for k in ('quantity','price','amount'))):
                 continue  # 空模板中只有序号和预填单位。
             if not name:
-                if raw_qty is not None or raw_price is not None:
+                has_values = (raw_qty is not None or raw_price is not None or get('amount') is not None
+                              or any((r, cols.get(k)) in sheet.formulas for k in ('quantity','price','amount')))
+                if has_values:
                     errors.append(Issue('读取明细', f'{sheet.name}!{r}', '商品名称为空', '补充商品名称，不能只写数量或价格。', '错误'))
-                continue
-            if normalize(raw_price) in ('圆养报价', '参考报价'):
-                continue
+                if not preview or not has_values:
+                    continue
             location = f'{sheet.name}!{r}'
             parsed = {}
             for key in ('price', 'quantity', 'amount'):
@@ -170,7 +184,8 @@ def import_excel(path, kind):
                     parsed[key] = None
             if kind == 'delivery' and parsed['quantity'] is None:
                 errors.append(Issue('读取明细', location, f'{name} 的数量为空', '补充数量；无实际明细的占位行请清空名称。', '错误'))
-                continue
+                if not preview:
+                    continue
             if parsed['price'] is not None and parsed['price'] < 0:
                 errors.append(Issue('读取单价', location, '单价为负数', '单价应为非负数，退货请以负数量表达。', '错误'))
             if kind == 'quote' and parsed['price'] is None:
@@ -190,10 +205,21 @@ def import_excel(path, kind):
                         explicit_spec or extract_spec(name), unit, text(get('code')), parsed['price'],
                         parsed['quantity'], parsed['amount'], day, text(get('order', True)) or current_order,
                         text(get('note')), effective, tax_included)
+            item.original_values = {
+                'serial': item.serial, 'name': name, 'spec': item.spec, 'unit': unit,
+                'code': item.code, 'price': text(raw_price), 'quantity': text(raw_qty),
+                'original_amount': text(get('amount')), 'day': text(get('date', True)) or current_day_raw or text(day),
+                'order': item.order, 'note': item.note, 'effective': effective_raw or text(effective),
+                'tax_included': '是' if tax_included else '否',
+            }
+            # 没有缓存的公式不能伪装成空白可选值；在编辑器中保留错误原因。
+            for key, field_name in [('price', 'price'), ('quantity', 'quantity'), ('amount', 'original_amount')]:
+                if key in cols and (r, cols[key]) in sheet.formulas and get(key) is None:
+                    item.original_values[field_name] = '公式无已保存结果'
             result.items.append(item)
             count += 1
             if kind == 'delivery':
-                if item.price is not None and item.original_amount is not None and abs(item.quantity * item.price - item.original_amount) > number('0.005'):
+                if item.quantity is not None and item.price is not None and item.original_amount is not None and abs(item.quantity * item.price - item.original_amount) > number('0.005'):
                     result.issues.append(Issue('核验原金额', location, f'原金额 {item.original_amount} 与数量×原单价 {item.quantity * item.price} 不一致', '核对原单；新账单按匹配后的报价计算。'))
                 if any(word in item.note for word in ('赠送', '退回', '退货')):
                     result.issues.append(Issue('结算备注', location, item.note, '双击该记录，确认商品、有效单价或赠送零价；退货需补充实际负数量记录。'))
@@ -213,6 +239,13 @@ def import_excel(path, kind):
                 result.issues.append(Issue('核验单号', order, f'单号出现在多张表：{sorted(tabs)}', '检查重复单号是否为重复送货；程序未自动去重。'))
     if not result.items:
         errors.append(Issue('读取明细', str(path), '数据区域为空，没有可用商品', '保留清晰表头并至少填写一条商品。', '错误'))
+    if preview and result.items:
+        # 行级问题由编辑器实时重算；结构问题独立保留，不能因修改一行就消失。
+        editable_steps = {'读取明细', '读取数值', '读取单价', '读取报价', '识别日期', '核验原金额', '识别报价日期'}
+        result.blocking_issues = [i for i in errors if i.step not in editable_steps]
+        result.issues = [i for i in result.issues if i.step not in editable_steps]
+        from .review import prepare_review
+        return prepare_review(result, kind)
     if errors:
         raise ImportFailure(errors + result.issues, '\n'.join(result.recognized) + f'\n已读到 {len(result.items)} 条，但为避免漏单本次导入整体未生效。')
     return result

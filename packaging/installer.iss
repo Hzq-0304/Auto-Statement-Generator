@@ -1,6 +1,6 @@
 ; 初版 Windows 安装包。只部署已打包程序，不包含输入表格和本地索引。
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef AppDist
   #define AppDist "..\dist\自动对账工具"

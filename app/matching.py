@@ -13,6 +13,10 @@ def reconcile(quotes, deliveries):
     matches = []
     for d in deliveries:
         m = Match(d)
+        if d.validation_errors or d.quantity is None or not d.name.strip():
+            m.status = '导入记录待修正'
+            matches.append(m)
+            continue
         if d.code:
             candidates = [q for q in quotes if q.code and normalize(q.code) == normalize(d.code)]
         else:
@@ -26,6 +30,8 @@ def reconcile(quotes, deliveries):
             # 编码冲突时名称/规格差异不能被编码相等掩盖。
             if by_code and key(q) != key(d):
                 m.status = '编号一致但名称/规格冲突'
+            elif q.validation_errors:
+                m.status = '报价记录待修正'
             elif q.price is None:
                 m.status = '报价缺价'
             else:
@@ -46,6 +52,8 @@ def reconcile(quotes, deliveries):
 
 
 def confirm(match, quote, factor, override, reason):
+    if match.delivery.validation_errors or quote.validation_errors or match.delivery.quantity is None:
+        raise ValueError('请先通过“修改已导入记录”修正记录错误，再确认商品匹配。')
     if not reason.strip():
         raise ValueError('请填写确认原因，便于追溯。')
     if not factor.is_finite() or factor <= 0:

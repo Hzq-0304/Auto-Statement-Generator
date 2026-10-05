@@ -26,7 +26,7 @@ try {
     $version = (& $Python -c 'from app import __version__; print(__version__)').Trim()
     if ($LASTEXITCODE -ne 0) { throw '读取版本失败。' }
     if (-not $SkipFreeze) {
-        & $Python -m PyInstaller --noconfirm --windowed --onedir --name 自动对账工具 --add-data 'assets;assets' --add-data 'docs;docs' main.py
+        & $Python -m PyInstaller --noconfirm --windowed --onedir --name 自动对账工具 --manifest packaging/app.manifest --add-data 'assets;assets' --add-data 'docs;docs' main.py
         if ($LASTEXITCODE -ne 0) { throw '程序打包失败。' }
     }
     $appDist = Join-Path $projectRoot 'dist/自动对账工具'

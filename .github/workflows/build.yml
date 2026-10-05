@@ -12,7 +12,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-build.txt
       - run: python -m unittest discover -s tests -v
-      - run: python -m PyInstaller --noconfirm --clean --windowed --onedir --name AutoStatement --add-data "assets;assets" --add-data "docs;docs" main.py
+      - run: python -m PyInstaller --noconfirm --clean --windowed --onedir --name AutoStatement --manifest packaging/app.manifest --add-data "assets;assets" --add-data "docs;docs" main.py
       - uses: actions/upload-artifact@v4
         with:
           name: AutoStatement-Windows

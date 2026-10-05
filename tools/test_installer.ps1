@@ -1,10 +1,13 @@
-﻿param([string]$Installer = 'release/AutoStatementGenerator-1.0.0-Setup-x64.exe')
+﻿param([string]$Installer = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+    $versionLine = Get-Content -LiteralPath 'app/__init__.py' | Select-String '__version__'
+    $version = [regex]::Match($versionLine.ToString(), '\d+\.\d+\.\d+').Value
+    if (-not $Installer) { $Installer = "release/AutoStatementGenerator-$version-Setup-x64.exe" }
     # 验收目录限定在项目 build 下；已安装的用户版本存在时不覆盖它。
-    $testRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'build/installer-smoke-1.0.0'))
+    $testRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot ("build/installer-smoke-$version-" + [guid]::NewGuid().ToString('N').Substring(0,8))))
     $allowedRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'build')) + [IO.Path]::DirectorySeparatorChar
     if (-not $testRoot.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw '验收目录不在 build 内。' }
     if (Test-Path -LiteralPath $testRoot) { throw '验收目录已存在，请先检查其中内容，不能覆盖。' }
