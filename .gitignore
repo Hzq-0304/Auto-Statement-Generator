@@ -1,0 +1,16 @@
+*.xlsx
+*.xls
+*.xlsm
+!assets/statement-template.xlsx
+analysis/
+outputs/
+data/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+*.log
+*.spec
+*.inspect.ndjson
