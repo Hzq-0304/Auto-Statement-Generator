@@ -14,3 +14,5 @@ node_modules/
 *.log
 *.spec
 *.inspect.ndjson
+.codegraph/
+release/

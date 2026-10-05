@@ -14,7 +14,9 @@
 
 ## 直接使用
 
-本机已打包版本位于 `dist/自动对账工具/自动对账工具.exe`。复制或发送整个“自动对账工具”文件夹，不能只复制 exe。发布版本也可从仓库的 Actions 构建产物下载。首次下载程序可能触发 Windows 未签名应用提示，本项目没有商业签名证书。
+推荐双击初版安装包 `release/AutoStatementGenerator-1.0.0-Setup-x64.exe`，按中文向导安装，再从开始菜单打开“自动对账工具”。支持 Windows 10/11 x64，无需另装 Python 或 Excel。
+
+免安装目录版仍位于 `dist/自动对账工具/自动对账工具.exe`。复制或发送时需携带整个文件夹。Actions 提供目录版构建产物。安装包未附商业代码签名证书。
 
 ## 源码安装与启动
 
@@ -77,6 +79,8 @@ py main.py --quote "报价单.xlsx" --delivery "送货单.xlsx" --output "待核
 正式命令行导出加 `--formal --acknowledge`，但有未匹配记录仍会拒绝导出。`--tax-rate 6` 表示未含税项目另加6%。GUI 推荐用于需要人工确认的业务文件。
 
 ## 打包
+
+初版安装包的构建步骤、校验文件及 Codegraph 用法见 [开发与安装包说明](docs/development.md)。
 
 ```powershell
 py -m pip install -r requirements-build.txt
